@@ -4,6 +4,7 @@ local contextMenu = {}
 contextMenu.scanDistance = 10.0
 contextMenu.controlNum = 217 -- caps lock
 
+-- meta
 contextMenu.open = false
 contextMenu.scanning = false
 contextMenu.focusCam = nil
@@ -22,38 +23,6 @@ local function drawTxt(x,y ,width,height,scale, text, r,g,b,a)
     AddTextComponentString(text)
     DrawText(x - width/2, y - height/2 + 0.005)
 end
-
-local function spawnCar(spawnPoint)
-	Citizen.Trace('test spawn car')
-
-	local playerPed = GetPlayerPed(-1)
-	local playerCoords = GetEntityCoords(playerPed)
-	local carModel = 'banshee'
-	local carHash = GetHashKey(carModel)
-
-	Citizen.Trace(carHash)
-	Citizen.Trace(playerPed)
-	Citizen.Trace(playerCoords)
-	--Citizen.Trace(spawnPoint)
-
-	RequestModel(carHash)
-	while not HasModelLoaded(carHash) do
-		Citizen.Wait(0)
-	end
-
-    playerCar = CreateVehicle(carHash, playerCoords, 0.0, true, false)
-	SetVehicleNumberPlateText(playerCar, 'GoleX')
-	SetVehicleOnGroundProperly(playerCar)
-	SetVehicleHasBeenOwnedByPlayer(playerCar,true)
-  	SetPedIntoVehicle(playerPed, playerCar, -1)
-
-end
-
-AddEventHandler('playerSpawned', function(spawnPoint)
-
-	Citizen.Trace('test trace 2')
-	spawnCar(spawnPoint)
-end)
 
 -- returns entity looked at by this client's gameplay camera, if any
 local function getCurrentTargetEntity()
@@ -85,7 +54,6 @@ local function getCurrentTargetEntity()
 	local checkCoordsY = startCoordsY + dirY * dist
 	local checkCoordsZ = startCoordsZ + dirZ * dist
 
-
 	--[[
 	drawTxt(0.55,0.14,0.185,0.206, 0.40, camCoords, 255,255,255,255)
 	drawTxt(0.55,0.18,0.185,0.206, 0.40, 'vector3('..dirX..','..dirY..','..dirZ..')', 255,255,255,255)
@@ -101,7 +69,45 @@ local function getCurrentTargetEntity()
     return entityHandle
 end
 
+-- UI
+local function openContextMenu()
+    SendNUIMessage({
+    	type = 'contextMenu',
+        command = 'open'
+    })
+	SetNuiFocus(true)
+end
+
+local function closeContextMenu()
+    SendNUIMessage({
+    	type = 'contextMenu',
+        command = 'close'
+    })
+	SetNuiFocus(false)
+end
+
+local function handleMouseInput()
+    DisableControlAction(0, 1, contextMenu.open) -- LookLeftRight
+    DisableControlAction(0, 2, contextMenu.open) -- LookUpDown
+    DisableControlAction(0, 142, contextMenu.open) -- MeleeAttackAlternate
+    DisableControlAction(0, 106, contextMenu.open) -- VehicleMouseControlOverride
+
+    if IsDisabledControlJustReleased(0, 142) then -- MeleeAttackAlternate
+        SendNUIMessage({
+            type = "click"
+        })
+    end
+end
+
+RegisterNUICallback('closeContextMenu', function(data, cb)
+    contextMenu.open = false
+
+    cb('ok')
+end)
+
+-- main thread
 Citizen.CreateThread(function()
+	SetNuiFocus(false)
 	while true do
 		Wait(0)
 
@@ -116,12 +122,23 @@ Citizen.CreateThread(function()
 			PointCamAtEntity(contextMenu.focusCam, contextMenu.focusEntity, 0.0, 0.0, 0.0, true);
 			RenderScriptCams(true, true, 700, 1, 0)
 
+    		Citizen.Trace('OPEN MENU')
+
+			-- open UI
+			openContextMenu()
+
 			while contextMenu.open do
+	            handleMouseInput()
 	    		if IsControlJustPressed(1, contextMenu.controlNum) then
 	    			contextMenu.open = false
 	    		end
 				Wait(0)
 			end
+
+    		Citizen.Trace('CLOSE MENU')
+
+			-- close UI
+			closeContextMenu()
 
 			-- tear down focus camera
 			RenderScriptCams(false, true, 200, 1, 0)
