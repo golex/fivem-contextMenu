@@ -8,7 +8,9 @@ server_script 'golextest_server.lua'
 files {
     'html/contextMenu.html',
     'html/contextMenu.css',
-    'html/btn_icon_tech.png',
-    'html/btn_star.png',
-    'html/cursor.png',
+    'html/icons/tech.png',
+    'html/icons/star.png',
+    'html/icons/cursor.png',
+    'html/icons/cuff.png',			-- handcuff by Hea Poh Lin from the Noun Project
+    'html/icons/veh.png',			-- Car by Ananth from the Noun Project
 }

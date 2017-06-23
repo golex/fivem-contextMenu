@@ -4,11 +4,25 @@ local contextMenu = {}
 contextMenu.scanDistance = 10.0
 contextMenu.controlNum = 217 -- caps lock
 
+-- enum
+contextMenu.entityTypes = {}
+contextMenu.entityTypes.vehicle = 0
+contextMenu.entityTypes.ped = 1
+contextMenu.entityTypes.player = 2
+contextMenu.entityTypes.all = 3
+
 -- meta
 contextMenu.open = false
 contextMenu.scanning = false
 contextMenu.focusCam = nil
 contextMenu.focusEntity = nil
+contextMenu.buttons = {}
+contextMenu.orderedSections = {}
+
+-- for testing
+contextMenu.pedIsCuffed = false
+contextMenu.vehIsLocked = false
+
 
 local function drawTxt(x,y ,width,height,scale, text, r,g,b,a)
     SetTextFont(0)
@@ -22,6 +36,25 @@ local function drawTxt(x,y ,width,height,scale, text, r,g,b,a)
     SetTextEntry("STRING")
     AddTextComponentString(text)
     DrawText(x - width/2, y - height/2 + 0.005)
+end
+
+local function drawMarker(entity)
+	local entityCoords = GetEntityCoords(entity)
+	DrawMarker(2, entityCoords.x, entityCoords.y, entityCoords.z+1.5, 0.0, 0.0, 0.0, 180.0, 0.0, 0.0, 0.5, 0.5, 0.5, 255, 128, 0, 200, true, true, 2, false, nil, nil, false)
+end
+
+local function getEntityType(entity)
+	local typeString = "Nothing"
+	if IsEntityAPed(entity) then
+		if IsPedAPlayer(entity) then
+			typeString = "Player"
+		else
+			typeString = "Pedestrian"
+		end
+	elseif IsEntityAVehicle(entity) then
+		typeString = "Vehicle"
+	end
+	return typeString
 end
 
 -- returns entity looked at by this client's gameplay camera, if any
@@ -70,10 +103,86 @@ local function getCurrentTargetEntity()
 end
 
 -- UI
-local function openContextMenu()
+local function populateContextMenu()
+	-- this method will go through the list of buttons and find all relevant ones and sent it to the UI in an event
+	local sortedButtons = {}
+
+	for i, button in ipairs(contextMenu.buttons) do
+		local visible = true
+
+		-- check entity type
+		local validEntity = true
+		if( button.entityType ~= contextMenu.entityTypes.all) then
+			if( IsEntityAVehicle(contextMenu.focusEntity) and button.entityType ~= contextMenu.entityTypes.vehicle) then
+				validEntity = false
+			end
+			if( IsEntityAPed(contextMenu.focusEntity) and button.entityType ~= contextMenu.entityTypes.ped) then
+				validEntity = false
+			end
+			if( IsPedAPlayer(contextMenu.focusEntity) and button.entityType ~= contextMenu.entityTypes.player) then
+				validEntity = false
+			end
+		end
+		visible = visible and validEntity
+
+		-- check visiblecallback
+		if visible and button.visibleCallback ~= nil then
+			visible = button.visibleCallback(contextMenu.focusEntity)
+		end
+
+		-- add to sorted list
+		if visible then
+			if sortedButtons[button.section] == nil then
+				sortedButtons[button.section] = {}
+			end
+			table.insert(sortedButtons[button.section], button)
+		end
+ 	end
+
     SendNUIMessage({
     	type = 'contextMenu',
-        command = 'open'
+        command = 'clear'
+    })
+
+    -- add sections of buttons based on the order they were added initially
+	for i, section in ipairs(contextMenu.orderedSections) do
+		local buttons = sortedButtons[section]
+		if buttons ~= nil then
+		    SendNUIMessage({
+		    	type = 'contextMenu',
+		        command = 'addSection',
+		        title = section
+		    })
+
+			for _, button in ipairs(buttons) do
+			    SendNUIMessage({
+			    	type = 'contextMenu',
+			        command = 'addButton',
+			        title = button.title,
+			        icon = button.icon,
+			        delay = button.delay,
+			        id = button.id
+			    })
+			end
+		end
+	end
+end
+
+local function openContextMenu()
+	local typeString = getEntityType(contextMenu.focusEntity)
+	local name = "Local"
+	if IsEntityAVehicle(contextMenu.focusEntity) then
+		local vehModel = GetEntityModel(contextMenu.focusEntity)
+		local vehModelName = GetDisplayNameFromVehicleModel(vehModel)
+		name = GetLabelText(vehModelName)
+	elseif IsPedAPlayer(contextMenu.focusEntity) then
+		name = "Player"
+	end
+    SendNUIMessage({
+    	type = 'contextMenu',
+        command = 'open',
+        title = name,
+        subtitle = typeString,
     })
 	SetNuiFocus(true)
 end
@@ -94,7 +203,8 @@ local function handleMouseInput()
 
     if IsDisabledControlJustReleased(0, 142) then -- MeleeAttackAlternate
         SendNUIMessage({
-            type = "click"
+    		type = 'contextMenu',
+            command = "click"
         })
     end
 end
@@ -105,9 +215,101 @@ RegisterNUICallback('closeContextMenu', function(data, cb)
     cb('ok')
 end)
 
+RegisterNUICallback('contextMenuButtonClicked', function(data, cb)
+    Citizen.Trace('button clicked ' .. data.id)
+    
+    -- trigger callback
+    local button = contextMenu.buttons[data.id]
+    if button ~= nil then
+    	button.clickedCallback(contextMenu.focusEntity)
+    end
+
+    -- refresh UI
+    populateContextMenu()
+
+    cb('ok')
+end)
+
+-- exports
+function addContextMenuButton(title, icon, section, entityType, clickedCallback, visibleCallback)
+	local button = {}
+	button.title = title
+	button.icon = icon
+	button.section = section
+	button.entityType = entityType
+	button.clickedCallback = clickedCallback
+	button.visibleCallback = visibleCallback
+	button.delay = 0.4
+	button.id = #contextMenu.buttons + 1
+	table.insert(contextMenu.buttons, button)
+
+	-- add section to list if needed
+	local newSection = true
+	for _, s in ipairs(contextMenu.orderedSections) do
+		if s == section then
+			newSection = false
+		end
+	end
+	if newSection then
+		table.insert(contextMenu.orderedSections, section)
+	end
+end
+
 -- main thread
 Citizen.CreateThread(function()
 	SetNuiFocus(false)
+
+	-- demo buttons
+	addContextMenuButton("Cuff", "cuff.png", "Cop", contextMenu.entityTypes.ped, 
+		function(_) 
+			contextMenu.pedIsCuffed = true
+		end, 
+		function(_) 
+			return not contextMenu.pedIsCuffed 
+		end)
+	addContextMenuButton("Uncuff", "cuff.png", "Cop", contextMenu.entityTypes.ped, 
+		function(_)
+			contextMenu.pedIsCuffed = false
+		end, 
+		function(_) 
+			return contextMenu.pedIsCuffed 
+		end)
+	addContextMenuButton("Retrieve ID", "star.png", "Cop", contextMenu.entityTypes.ped, function() end,  
+		function(_) 
+			return contextMenu.pedIsCuffed 
+		end)
+	addContextMenuButton("Search", "star.png", "Cop", contextMenu.entityTypes.ped, function() end,  
+		function(_) 
+			return contextMenu.pedIsCuffed 
+		end)
+	addContextMenuButton("Escort", "star.png", "Cop", contextMenu.entityTypes.ped, function() end,  
+		function(_) 
+			return contextMenu.pedIsCuffed 
+		end)
+	addContextMenuButton("Arrest", "star.png", "Cop", contextMenu.entityTypes.ped, function() end,  
+		function(_) 
+			return contextMenu.pedIsCuffed 
+		end)
+	addContextMenuButton("Frisk", "star.png", "Cop", contextMenu.entityTypes.ped, function() end, nil)
+	addContextMenuButton("Impound", "cuff.png", "Cop", contextMenu.entityTypes.vehicle, function() end, nil)
+
+	addContextMenuButton("Lock", "exclamation.png", "Misc", contextMenu.entityTypes.vehicle, 
+		function(_)
+			contextMenu.vehIsLocked = true
+	 	end,  
+		function(_) 
+			return not contextMenu.vehIsLocked 
+		end)
+	addContextMenuButton("Unlock", "exclamation.png", "Misc", contextMenu.entityTypes.vehicle, 
+		function(_) 
+			contextMenu.vehIsLocked = false
+		end,  
+		function(_) 
+			return contextMenu.vehIsLocked 
+		end)
+	addContextMenuButton("Repair", "exclamation.png", "Misc", contextMenu.entityTypes.vehicle, function() end, nil)
+	addContextMenuButton("Emote", "exclamation.png", "Misc", contextMenu.entityTypes.all, function() end, nil)
+
 	while true do
 		Wait(0)
 
@@ -125,9 +327,11 @@ Citizen.CreateThread(function()
     		Citizen.Trace('OPEN MENU')
 
 			-- open UI
+			populateContextMenu()
 			openContextMenu()
 
 			while contextMenu.open do
+				drawMarker(contextMenu.focusEntity)
 	            handleMouseInput()
 	    		if IsControlJustPressed(1, contextMenu.controlNum) then
 	    			contextMenu.open = false
@@ -153,19 +357,12 @@ Citizen.CreateThread(function()
 				local entity = getCurrentTargetEntity()
 				if DoesEntityExist(entity) then
 					--Citizen.Trace(entity)
-					local entityCoords = GetEntityCoords(entity)
-					drawTxt(0.55,0.1,0.185,0.206, 0.40, 'Entity found: ' .. entity .. ' @ ' .. entityCoords, 255,255,255,255)
-					DrawMarker(2, entityCoords.x, entityCoords.y, entityCoords.z+1.5, 0.0, 0.0, 0.0, 180.0, 0.0, 0.0, 1.0, 1.0, 1.0, 255, 128, 0, 200, true, true, 2, false, nil, nil, false)
-					--[[
-					if not camVisible then
-						RenderScriptCams(true, true, 1000, 1, 0)
-						camVisible = true
-					end
-					]]
+					drawMarker(entity)
 					lastValidEntity = entity
 				else
 					lastValidEntity = nil
-				end                 
+				end             
+				drawTxt(0.48,0.1,0.185,0.206, 0.35, 'Interact with: ' .. getEntityType(entity), 255,255,255,255)    
 
 				Wait(0)
 		   	end
