@@ -11,6 +11,7 @@ files {
     'html/icons/tech.png',
     'html/icons/star.png',
     'html/icons/cursor.png',
+    'html/icons/exclamation.png', 	-- Exclamation Mark by Kris Prepiakova from the Noun Project
     'html/icons/cuff.png',			-- handcuff by Hea Poh Lin from the Noun Project
     'html/icons/veh.png',			-- Car by Ananth from the Noun Project
 }
